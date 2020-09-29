@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
-	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -38,21 +38,25 @@ type valSample struct {
 	value   uint64
 }
 
-var sc = make(chan callSample)
+// var sc = make(chan callSample)
+
+var rps uint64
 
 // sayHello implements helloworld.GreeterServer.SayHello
 func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
 	name := in.GetName()
 	log.Printf("Received: %v", name)
 
-	parts := strings.Split(name, ":")
-	wid := parts[len(parts)-1]
+	// parts := strings.Split(name, ":")
+	// wid := parts[len(parts)-1]
 
 	// mu.Lock()
 	// samples = append(samples, callSample{instant: time.Now(), workerID: wid})
 	// mu.Unlock()
 
-	sc <- callSample{instant: time.Now(), workerID: wid}
+	// sc <- callSample{instant: time.Now(), workerID: wid}
+
+	atomic.AddUint64(&rps, 1)
 
 	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
 }
@@ -80,12 +84,13 @@ func main() {
 
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)
+	stop := make(chan bool, 1)
 
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigs
-		done <- true
+		stop <- true
 	}()
 
 	go func() {
@@ -96,11 +101,29 @@ func main() {
 		}
 	}()
 
-	var samples = make([]callSample, 0, 100000000)
+	// var samples = make([]callSample, 0, 100000000)
+
+	// go func() {
+	// 	for s := range sc {
+	// 		samples = append(samples, s)
+	// 	}
+	// }()
+
+	rpsSamples := make([]valSample, 0, 10000)
+
+	ticker := time.NewTicker(1 * time.Second)
 
 	go func() {
-		for s := range sc {
-			samples = append(samples, s)
+		for {
+			select {
+			case <-stop:
+				ticker.Stop()
+				done <- true
+				return
+			case <-ticker.C:
+				rpsSamples = append(rpsSamples, valSample{instant: time.Now(), value: atomic.LoadUint64(&rps)})
+				atomic.StoreUint64(&rps, 0)
+			}
 		}
 	}()
 
@@ -119,18 +142,27 @@ func main() {
 
 	<-done
 
-	close(sc)
+	// close(sc)
 
 	fmt.Println("done!")
 
-	sort.Slice(samples, func(i, j int) bool {
-		// return samples[i].instant.Before(samples[j].instant)
-		return samples[i].instant.UnixNano() < samples[j].instant.UnixNano()
+	sort.Slice(rpsSamples, func(i, j int) bool {
+		return rpsSamples[i].instant.UnixNano() < rpsSamples[j].instant.UnixNano()
 	})
 
-	printData(samples, name)
+	if len(rpsSamples) > 0 {
+		csv(rpsSamples, name)
+		plot(rpsSamples, name, name)
+	}
 
-	aggrRPS(samples, name)
+	// sort.Slice(samples, func(i, j int) bool {
+	// 	// return samples[i].instant.Before(samples[j].instant)
+	// 	return samples[i].instant.UnixNano() < samples[j].instant.UnixNano()
+	// })
+
+	// printData(samples, name)
+
+	// aggrRPS(samples, name)
 }
 
 func aggrRPS(s []callSample, name string) {
@@ -252,8 +284,8 @@ func plot(data []valSample, name, yLabel string) {
 				Name: name,
 				Style: chart.Style{
 					Show:        true,
-					StrokeColor: chart.ColorAlternateBlue,
-					FillColor:   chart.ColorAlternateBlue.WithAlpha(24),
+					StrokeColor: chart.ColorBlue,
+					FillColor:   chart.ColorBlue.WithAlpha(8),
 				},
 				XValues: xValues,
 				YValues: yValues,
