@@ -15,6 +15,7 @@
 
 # go binary
 grpc-helloworld
+grpc-helloworld-oc
 
 # Logs
 logs
