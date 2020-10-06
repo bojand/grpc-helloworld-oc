@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	// "github.com/bojand/grpc-helloworld-oc/exporter"
 	"contrib.go.opencensus.io/exporter/prometheus"
 	pb "github.com/bojand/grpc-helloworld-oc/helloworld"
+	colorful "github.com/lucasb-eyer/go-colorful"
 	"google.golang.org/grpc"
 
 	chart "github.com/wcharczuk/go-chart"
@@ -42,26 +44,30 @@ type valSample struct {
 
 var rps uint64
 
+var wm sync.Mutex
+var wrps map[string]uint64
+
 // sayHello implements helloworld.GreeterServer.SayHello
 func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
 	name := in.GetName()
 	log.Printf("Received: %v", name)
 
-	// parts := strings.Split(name, ":")
-	// wid := parts[len(parts)-1]
+	defer func() {
+		atomic.AddUint64(&rps, 1)
 
-	// mu.Lock()
-	// samples = append(samples, callSample{instant: time.Now(), workerID: wid})
-	// mu.Unlock()
+		wm.Lock()
+		defer wm.Unlock()
+		wrps[name] = wrps[name] + 1
+	}()
 
-	// sc <- callSample{instant: time.Now(), workerID: wid}
-
-	atomic.AddUint64(&rps, 1)
+	time.Sleep(50 * time.Millisecond)
 
 	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
 }
 
 func main() {
+	wrps = make(map[string]uint64, 100)
+
 	name := os.Args[1]
 	// view.SetReportingPeriod(30 * time.Second)
 
@@ -111,6 +117,8 @@ func main() {
 
 	rpsSamples := make([]valSample, 0, 10000)
 
+	wrpsSamples := make(map[string][]valSample, 10)
+
 	ticker := time.NewTicker(1 * time.Second)
 
 	go func() {
@@ -121,8 +129,22 @@ func main() {
 				done <- true
 				return
 			case <-ticker.C:
-				rpsSamples = append(rpsSamples, valSample{instant: time.Now(), value: atomic.LoadUint64(&rps)})
+				instant := time.Now()
+				rpsSamples = append(rpsSamples, valSample{instant: instant, value: atomic.LoadUint64(&rps)})
 				atomic.StoreUint64(&rps, 0)
+
+				wm.Lock()
+				for k, v := range wrps {
+					_, ok := wrpsSamples[k]
+					if !ok {
+						wrpsSamples[k] = make([]valSample, 0, 10000)
+					}
+
+					wrpsSamples[k] = append(wrpsSamples[k], valSample{instant: instant, value: v})
+
+					wrps[k] = 0
+				}
+				wm.Unlock()
 			}
 		}
 	}()
@@ -144,15 +166,22 @@ func main() {
 
 	// close(sc)
 
-	fmt.Println("done!")
+	fmt.Println("done! workers:", len(wrpsSamples))
+
+	hasHits := false
 
 	sort.Slice(rpsSamples, func(i, j int) bool {
+		if !hasHits && rpsSamples[i].value > 0 {
+			hasHits = true
+		}
+
 		return rpsSamples[i].instant.UnixNano() < rpsSamples[j].instant.UnixNano()
 	})
 
-	if len(rpsSamples) > 0 {
+	if len(rpsSamples) > 0 && hasHits {
 		csv(rpsSamples, name)
 		plot(rpsSamples, name, name)
+		plotW(wrpsSamples, name, name)
 	}
 
 	// sort.Slice(samples, func(i, j int) bool {
@@ -310,5 +339,110 @@ func plot(data []valSample, name, yLabel string) {
 	if err := pngFile.Close(); err != nil {
 		panic(err)
 	}
+}
 
+func plotW(data map[string][]valSample, name, yLabel string) {
+	// yValues := make(map[string][]float64, len(data))
+
+	var longest string
+	maxLen := 0
+	for i := range data {
+		if len(data[i]) > maxLen {
+			longest = i
+			maxLen = len(data[i])
+		}
+	}
+
+	xValues := make([]time.Time, 0, len(data[longest]))
+
+	for _, v := range data[longest] {
+		v := v
+		xValues = append(xValues, v.instant)
+	}
+
+	graph := chart.Chart{
+		Width:  1200,
+		Height: 480,
+		XAxis: chart.XAxis{
+			Name:           "Time",
+			NameStyle:      chart.StyleShow(),
+			ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 3:04:05PM"),
+			Style: chart.Style{
+				Show:        true,
+				StrokeWidth: 1,
+				StrokeColor: drawing.Color{
+					R: 85,
+					G: 85,
+					B: 85,
+					A: 180,
+				},
+			},
+		},
+		YAxis: chart.YAxis{
+			Name:      yLabel,
+			NameStyle: chart.StyleShow(),
+			Style: chart.Style{
+				Show:        true,
+				StrokeWidth: 1,
+				StrokeColor: drawing.Color{
+					R: 85,
+					G: 85,
+					B: 85,
+					A: 180,
+				},
+			},
+		},
+	}
+
+	pal, err := colorful.WarmPalette(len(data))
+	if err != nil {
+		panic(err)
+	}
+
+	ci := 0
+	for sn, v := range data {
+		v := v
+
+		// r, b, g := pal[ci].RGB255()
+		r, b, g, a := pal[ci].RGBA()
+		col := drawing.ColorFromAlphaMixedRGBA(r, g, b, a)
+
+		yValues := make([]float64, maxLen)
+
+		for i, yv := range v {
+			yv := yv
+			// yValues = append(yValues, float64(yv.value))
+			yValues[i] = float64(yv.value)
+		}
+
+		fmt.Println(yValues)
+		fmt.Println(col)
+
+		cs := chart.TimeSeries{
+			Name: sn,
+			Style: chart.Style{
+				Show:        true,
+				StrokeColor: col,
+				// FillColor:   col.WithAlpha(8),
+			},
+			XValues: xValues,
+			YValues: yValues,
+		}
+		graph.Series = append(graph.Series, cs)
+
+		ci++
+	}
+
+	pngFile, err := os.Create(fmt.Sprintf("%s_%d_workers.png", name, time.Now().Unix()))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := graph.Render(chart.PNG, pngFile); err != nil {
+		panic(err)
+	}
+
+	if err := pngFile.Close(); err != nil {
+		panic(err)
+	}
 }
