@@ -47,6 +47,8 @@ var rps uint64
 var wm sync.Mutex
 var wrps map[string]uint64
 
+var workerIDS []string
+
 // sayHello implements helloworld.GreeterServer.SayHello
 func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
 	name := in.GetName()
@@ -57,6 +59,11 @@ func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) 
 
 		wm.Lock()
 		defer wm.Unlock()
+
+		if _, ok := wrps[name]; !ok {
+			workerIDS = append(workerIDS, name)
+		}
+
 		wrps[name] = wrps[name] + 1
 	}()
 
@@ -107,17 +114,9 @@ func main() {
 		}
 	}()
 
-	// var samples = make([]callSample, 0, 100000000)
-
-	// go func() {
-	// 	for s := range sc {
-	// 		samples = append(samples, s)
-	// 	}
-	// }()
-
 	rpsSamples := make([]valSample, 0, 10000)
 
-	wrpsSamples := make(map[string][]valSample, 10)
+	wrpsSamples := make(map[time.Time]map[string]valSample, 10)
 
 	ticker := time.NewTicker(1 * time.Second)
 
@@ -130,17 +129,18 @@ func main() {
 				return
 			case <-ticker.C:
 				instant := time.Now()
+
 				rpsSamples = append(rpsSamples, valSample{instant: instant, value: atomic.LoadUint64(&rps)})
 				atomic.StoreUint64(&rps, 0)
 
 				wm.Lock()
 				for k, v := range wrps {
-					_, ok := wrpsSamples[k]
+					_, ok := wrpsSamples[instant]
 					if !ok {
-						wrpsSamples[k] = make([]valSample, 0, 10000)
+						wrpsSamples[instant] = make(map[string]valSample, 10)
 					}
 
-					wrpsSamples[k] = append(wrpsSamples[k], valSample{instant: instant, value: v})
+					wrpsSamples[instant][k] = valSample{instant: instant, value: v}
 
 					wrps[k] = 0
 				}
@@ -166,7 +166,7 @@ func main() {
 
 	// close(sc)
 
-	fmt.Println("done! workers:", len(wrpsSamples))
+	fmt.Println("done! workers:", len(workerIDS))
 
 	hasHits := false
 
@@ -183,72 +183,6 @@ func main() {
 		plot(rpsSamples, name, name)
 		plotW(wrpsSamples, name, name)
 	}
-
-	// sort.Slice(samples, func(i, j int) bool {
-	// 	// return samples[i].instant.Before(samples[j].instant)
-	// 	return samples[i].instant.UnixNano() < samples[j].instant.UnixNano()
-	// })
-
-	// printData(samples, name)
-
-	// aggrRPS(samples, name)
-}
-
-func aggrRPS(s []callSample, name string) {
-
-	start := s[0].instant
-	end := start.Add(time.Second)
-
-	rpsSamples := make([]valSample, 0, 10000)
-
-	rpsSamples = append(rpsSamples,
-		valSample{instant: start.Add(-3 * time.Second), value: 0},
-		valSample{instant: start.Add(-2 * time.Second), value: 0},
-		valSample{instant: start.Add(-1 * time.Second), value: 0},
-		valSample{instant: start, value: 0},
-	)
-
-	var crps uint64 = 0
-
-	for _, s := range s {
-		s := s
-
-		// if s.instant.Before(end) {
-		if s.instant.UnixNano() >= start.UnixNano() && s.instant.UnixNano() < end.UnixNano() {
-			crps++
-		} else {
-			rpsSamples = append(rpsSamples, valSample{instant: end, value: crps})
-
-			start = end
-			end = start.Add(time.Second)
-			crps = 0
-		}
-	}
-
-	rpsSamples = append(rpsSamples,
-		valSample{instant: end.Add(1 * time.Second), value: 0},
-		valSample{instant: end.Add(2 * time.Second), value: 0},
-		valSample{instant: end.Add(3 * time.Second), value: 0},
-	)
-
-	csv(rpsSamples, name)
-	plot(rpsSamples, name, name)
-}
-
-func printData(data []callSample, name string) {
-	file, err := os.Create(fmt.Sprintf("%s_%d_data.csv", name, time.Now().Unix()))
-	if err != nil {
-		panic(err)
-	}
-
-	defer file.Close()
-
-	fmt.Fprintf(file, "%s,%s\n", "time", "workerID")
-	for _, s := range data {
-		s := s
-		fmt.Fprintf(file, "%d,%v\n", s.instant.UnixNano(), s.workerID)
-	}
-	fmt.Fprintln(file)
 }
 
 func csv(data []valSample, colY string) {
@@ -341,24 +275,18 @@ func plot(data []valSample, name, yLabel string) {
 	}
 }
 
-func plotW(data map[string][]valSample, name, yLabel string) {
-	// yValues := make(map[string][]float64, len(data))
+func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 
-	var longest string
-	maxLen := 0
-	for i := range data {
-		if len(data[i]) > maxLen {
-			longest = i
-			maxLen = len(data[i])
-		}
+	xValues := make([]time.Time, 0, len(data))
+
+	for t := range data {
+		t := t
+		xValues = append(xValues, t)
 	}
 
-	xValues := make([]time.Time, 0, len(data[longest]))
-
-	for _, v := range data[longest] {
-		v := v
-		xValues = append(xValues, v.instant)
-	}
+	sort.Slice(xValues, func(i, j int) bool {
+		return xValues[i].Before(xValues[j])
+	})
 
 	graph := chart.Chart{
 		Width:  1200,
@@ -400,37 +328,41 @@ func plotW(data map[string][]valSample, name, yLabel string) {
 	}
 
 	ci := 0
-	for sn, v := range data {
-		v := v
+	for _, wid := range workerIDS {
+		wid := wid
 
-		// r, b, g := pal[ci].RGB255()
 		r, b, g, a := pal[ci].RGBA()
 		col := drawing.ColorFromAlphaMixedRGBA(r, g, b, a)
+		ci++
 
-		yValues := make([]float64, maxLen)
+		yValues := make([]float64, 0, len(xValues))
 
-		for i, yv := range v {
-			yv := yv
-			// yValues = append(yValues, float64(yv.value))
-			yValues[i] = float64(yv.value)
+		for _, tsv := range xValues {
+			tsv := tsv
+			tsdata, ok := data[tsv]
+			if !ok {
+				yValues = append(yValues, 0.0)
+			} else {
+				if wdata, ok := tsdata[wid]; ok {
+					yValues = append(yValues, float64(wdata.value))
+				} else {
+					yValues = append(yValues, 0.0)
+				}
+			}
 		}
 
-		fmt.Println(yValues)
-		fmt.Println(col)
+		fmt.Println(wid, ": ", yValues)
 
 		cs := chart.TimeSeries{
-			Name: sn,
+			Name: wid,
 			Style: chart.Style{
 				Show:        true,
 				StrokeColor: col,
-				// FillColor:   col.WithAlpha(8),
 			},
 			XValues: xValues,
 			YValues: yValues,
 		}
 		graph.Series = append(graph.Series, cs)
-
-		ci++
 	}
 
 	pngFile, err := os.Create(fmt.Sprintf("%s_%d_workers.png", name, time.Now().Unix()))
