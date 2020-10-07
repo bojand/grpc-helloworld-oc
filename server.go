@@ -164,8 +164,6 @@ func main() {
 
 	<-done
 
-	// close(sc)
-
 	fmt.Println("done! workers:", len(workerIDS))
 
 	hasHits := false
@@ -182,6 +180,7 @@ func main() {
 		csv(rpsSamples, name)
 		plot(rpsSamples, name, name)
 		plotW(wrpsSamples, name, name)
+		plotWC(wrpsSamples, name, name)
 	}
 }
 
@@ -366,6 +365,89 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 	}
 
 	pngFile, err := os.Create(fmt.Sprintf("%s_%d_workers.png", name, time.Now().Unix()))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := graph.Render(chart.PNG, pngFile); err != nil {
+		panic(err)
+	}
+
+	if err := pngFile.Close(); err != nil {
+		panic(err)
+	}
+}
+
+func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
+
+	xValues := make([]time.Time, 0, len(data))
+
+	for t := range data {
+		t := t
+		xValues = append(xValues, t)
+	}
+
+	sort.Slice(xValues, func(i, j int) bool {
+		return xValues[i].Before(xValues[j])
+	})
+
+	graph := chart.Chart{
+		Width:  1200,
+		Height: 480,
+		XAxis: chart.XAxis{
+			Name:           "Time",
+			NameStyle:      chart.StyleShow(),
+			ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 3:04:05PM"),
+			Style: chart.Style{
+				Show:        true,
+				StrokeWidth: 1,
+				StrokeColor: drawing.Color{
+					R: 85,
+					G: 85,
+					B: 85,
+					A: 180,
+				},
+			},
+		},
+		YAxis: chart.YAxis{
+			Name:      yLabel,
+			NameStyle: chart.StyleShow(),
+			Style: chart.Style{
+				Show:        true,
+				StrokeWidth: 1,
+				StrokeColor: drawing.Color{
+					R: 85,
+					G: 85,
+					B: 85,
+					A: 180,
+				},
+			},
+		},
+	}
+
+	yValues := make([]float64, 0, len(xValues))
+
+	for _, tsv := range xValues {
+		tsv := tsv
+		tsdata, ok := data[tsv]
+		if !ok {
+			yValues = append(yValues, 0.0)
+		} else {
+			yValues = append(yValues, float64(len(tsdata)))
+		}
+	}
+
+	cs := chart.TimeSeries{
+		Name: "worker_count",
+		Style: chart.Style{
+			Show: true,
+		},
+		XValues: xValues,
+		YValues: yValues,
+	}
+	graph.Series = append(graph.Series, cs)
+
+	pngFile, err := os.Create(fmt.Sprintf("%s_%d_wc.png", name, time.Now().Unix()))
 	if err != nil {
 		panic(err)
 	}
