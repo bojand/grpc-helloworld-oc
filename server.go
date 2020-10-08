@@ -48,6 +48,7 @@ var wm sync.Mutex
 var wrps map[string]uint64
 
 var workerIDS []string
+var workerIDSMap map[string]struct{}
 
 // sayHello implements helloworld.GreeterServer.SayHello
 func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
@@ -60,8 +61,9 @@ func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) 
 		wm.Lock()
 		defer wm.Unlock()
 
-		if _, ok := wrps[name]; !ok {
+		if _, ok := workerIDSMap[name]; !ok {
 			workerIDS = append(workerIDS, name)
+			workerIDSMap[name] = struct{}{}
 		}
 
 		wrps[name] = wrps[name] + 1
@@ -74,6 +76,7 @@ func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) 
 
 func main() {
 	wrps = make(map[string]uint64, 100)
+	workerIDSMap = make(map[string]struct{}, 100)
 
 	name := os.Args[1]
 	// view.SetReportingPeriod(30 * time.Second)
@@ -142,7 +145,7 @@ func main() {
 
 					wrpsSamples[instant][k] = valSample{instant: instant, value: v}
 
-					wrps[k] = 0
+					delete(wrps, k)
 				}
 				wm.Unlock()
 			}
@@ -436,6 +439,8 @@ func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
 			yValues = append(yValues, float64(len(tsdata)))
 		}
 	}
+
+	fmt.Println(yValues)
 
 	cs := chart.TimeSeries{
 		Name: "worker_count",
