@@ -353,7 +353,7 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 			}
 		}
 
-		fmt.Println(wid, ": ", yValues)
+		fmt.Println(wid, "rps: ", yValues)
 
 		cs := chart.TimeSeries{
 			Name: wid,
@@ -367,7 +367,7 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 		graph.Series = append(graph.Series, cs)
 	}
 
-	pngFile, err := os.Create(fmt.Sprintf("%s_%d_workers.png", name, time.Now().Unix()))
+	pngFile, err := os.Create(fmt.Sprintf("%s_%d_workers_rps.png", name, time.Now().Unix()))
 	if err != nil {
 		panic(err)
 	}
@@ -440,7 +440,7 @@ func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
 		}
 	}
 
-	fmt.Println(yValues)
+	fmt.Println("wc:", yValues)
 
 	cs := chart.TimeSeries{
 		Name: "worker_count",
