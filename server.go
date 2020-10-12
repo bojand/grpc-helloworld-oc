@@ -50,6 +50,8 @@ var wrps map[string]uint64
 var workerIDS []string
 var workerIDSMap map[string]struct{}
 
+var callSamples []*callSample
+
 // sayHello implements helloworld.GreeterServer.SayHello
 func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
 	name := in.GetName()
@@ -67,6 +69,8 @@ func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) 
 		}
 
 		wrps[name] = wrps[name] + 1
+
+		callSamples = append(callSamples, &callSample{instant: time.Now(), workerID: name})
 	}()
 
 	time.Sleep(50 * time.Millisecond)
@@ -132,9 +136,9 @@ func main() {
 				return
 			case <-ticker.C:
 				instant := time.Now()
+				ov := atomic.SwapUint64(&rps, 0)
 
-				rpsSamples = append(rpsSamples, valSample{instant: instant, value: atomic.LoadUint64(&rps)})
-				atomic.StoreUint64(&rps, 0)
+				rpsSamples = append(rpsSamples, valSample{instant: instant, value: ov})
 
 				wm.Lock()
 				for k, v := range wrps {
@@ -180,11 +184,92 @@ func main() {
 	})
 
 	if len(rpsSamples) > 0 && hasHits {
-		csv(rpsSamples, name)
-		plot(rpsSamples, name, name)
+		// csv(rpsSamples, name)
+		// plot(rpsSamples, name, name)
 		plotW(wrpsSamples, name, name)
 		plotWC(wrpsSamples, name, name)
+		aggrRPS(callSamples, name)
 	}
+}
+
+func aggrRPS(s []*callSample, name string) {
+
+	cc := len(s)
+
+	if cc == 0 {
+		return
+	}
+
+	sort.Slice(s, func(i, j int) bool {
+		return s[i].instant.UnixNano() < s[j].instant.UnixNano()
+	})
+
+	start := s[0].instant
+	end := start.Add(time.Second)
+
+	rpsSamples := make([]valSample, 0, 10000)
+
+	rpsSamples = append(rpsSamples,
+		valSample{instant: start.Add(-3 * time.Second), value: 0},
+		valSample{instant: start.Add(-2 * time.Second), value: 0},
+		valSample{instant: start.Add(-1 * time.Second), value: 0},
+		valSample{instant: start, value: 0},
+	)
+
+	var crps uint64 = 0
+
+	for i, s := range s {
+		s := s
+		nv := s.instant.UnixNano()
+
+		// sv := start.UnixNano()
+		// ev := end.UnixNano()
+		// fmt.Println("start: ", sv, " end:", ev, " nv:", nv, " nv >= sv:", nv >= sv, " nv < ev:", nv < sv, " crps:", crps)
+
+		// if s.instant.Before(end) {
+		if nv >= start.UnixNano() && nv < end.UnixNano() {
+			crps++
+
+			if i == cc-1 {
+				// end add manually
+				fmt.Println("add end", end.UnixNano(), crps)
+				rpsSamples = append(rpsSamples, valSample{instant: end, value: crps})
+			}
+		} else if i == cc-1 {
+			crps++
+
+			// end add manually
+			fmt.Println("add end", end.UnixNano(), crps)
+			rpsSamples = append(rpsSamples, valSample{instant: end, value: crps})
+		} else {
+			fmt.Println("add ", end.UnixNano(), crps)
+			rpsSamples = append(rpsSamples, valSample{instant: end, value: crps})
+
+			start = end
+			end = start.Add(time.Second)
+
+			crps = 1 // we have a sample falling into the next one
+		}
+	}
+
+	end = s[cc-1].instant
+
+	rpsSamples = append(rpsSamples,
+		valSample{instant: end.Add(1 * time.Second), value: 0},
+		valSample{instant: end.Add(2 * time.Second), value: 0},
+		valSample{instant: end.Add(3 * time.Second), value: 0},
+	)
+
+	total := uint64(0)
+	for _, c := range rpsSamples {
+		total = total + c.value
+	}
+
+	fmt.Println("aggr total:", total, " call count:", cc)
+
+	name = name + "_aggr"
+	csv(rpsSamples, name)
+	plot(rpsSamples, name, name)
 }
 
 func csv(data []valSample, colY string) {
@@ -383,16 +468,24 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 
 func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
 
-	xValues := make([]time.Time, 0, len(data))
-
+	converted := make([]time.Time, 0, len(data))
 	for t := range data {
 		t := t
-		xValues = append(xValues, t)
+		converted = append(converted, t)
 	}
 
-	sort.Slice(xValues, func(i, j int) bool {
-		return xValues[i].Before(xValues[j])
+	sort.Slice(converted, func(i, j int) bool {
+		return converted[i].Before(converted[j])
 	})
+
+	xValues := make([]time.Time, len(converted)+2)
+	xValues[0] = converted[0].Add(-1 * time.Second)
+	for i, cv := range converted {
+		cv := cv
+		xValues[i+1] = cv
+	}
+
+	xValues[len(xValues)-1] = converted[len(converted)-1].Add(1 * time.Second)
 
 	graph := chart.Chart{
 		Width:  1200,
@@ -429,7 +522,6 @@ func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
 	}
 
 	yValues := make([]float64, 0, len(xValues))
-
 	for _, tsv := range xValues {
 		tsv := tsv
 		tsdata, ok := data[tsv]
