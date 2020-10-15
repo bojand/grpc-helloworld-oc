@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"sort"
@@ -14,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	// "github.com/bojand/grpc-helloworld-oc/exporter"
-	"contrib.go.opencensus.io/exporter/prometheus"
 	pb "github.com/bojand/grpc-helloworld-oc/helloworld"
 	colorful "github.com/lucasb-eyer/go-colorful"
 	"google.golang.org/grpc"
@@ -23,7 +20,6 @@ import (
 	chart "github.com/wcharczuk/go-chart"
 	"github.com/wcharczuk/go-chart/drawing"
 	"go.opencensus.io/plugin/ocgrpc"
-	"go.opencensus.io/stats/view"
 )
 
 const (
@@ -83,24 +79,6 @@ func main() {
 	workerIDSMap = make(map[string]struct{}, 100)
 
 	name := os.Args[1]
-	// view.SetReportingPeriod(30 * time.Second)
-
-	// Register stats and trace exporters to export
-	// the collected data.
-	// view.RegisterExporter(&exporter.PrintExporter{})
-
-	pe, err := prometheus.NewExporter(prometheus.Options{
-		Namespace: "demo",
-	})
-	if err != nil {
-		log.Fatalf("Failed to create Prometheus exporter: %v", err)
-	}
-
-	view.RegisterExporter(pe)
-
-	if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
-		log.Fatalf("Failed to register ocgrpc server views: %v", err)
-	}
 
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)
@@ -111,14 +89,6 @@ func main() {
 	go func() {
 		<-sigs
 		stop <- true
-	}()
-
-	go func() {
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", pe)
-		if err := http.ListenAndServe(":8888", mux); err != nil {
-			log.Fatalf("Failed to run Prometheus /metrics endpoint: %v", err)
-		}
 	}()
 
 	rpsSamples := make([]valSample, 0, 10000)
@@ -409,7 +379,7 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 		},
 	}
 
-	pal, err := colorful.WarmPalette(len(data))
+	pal, err := colorful.WarmPalette(len(workerIDS))
 	if err != nil {
 		panic(err)
 	}
