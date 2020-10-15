@@ -232,17 +232,17 @@ func aggrRPS(s []*callSample, name string) {
 
 			if i == cc-1 {
 				// end add manually
-				fmt.Println("add end", end.UnixNano(), crps)
+				// fmt.Println("add end", end.UnixNano(), crps)
 				rpsSamples = append(rpsSamples, valSample{instant: end, value: crps})
 			}
 		} else if i == cc-1 {
 			crps++
 
 			// end add manually
-			fmt.Println("add end", end.UnixNano(), crps)
+			// fmt.Println("add end", end.UnixNano(), crps)
 			rpsSamples = append(rpsSamples, valSample{instant: end, value: crps})
 		} else {
-			fmt.Println("add ", end.UnixNano(), crps)
+			// fmt.Println("add ", end.UnixNano(), crps)
 			rpsSamples = append(rpsSamples, valSample{instant: end, value: crps})
 
 			start = end
