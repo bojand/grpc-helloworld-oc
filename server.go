@@ -345,6 +345,10 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 		return xValues[i].Before(xValues[j])
 	})
 
+	if len(xValues) <= 1 {
+		xValues = append(xValues, xValues[len(xValues)-1].Add(time.Second))
+	}
+
 	graph := chart.Chart{
 		Width:  1200,
 		Height: 480,
@@ -406,6 +410,10 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 					yValues = append(yValues, 0.0)
 				}
 			}
+		}
+
+		if len(yValues) <= 1 {
+			yValues = append(yValues, 0.0)
 		}
 
 		fmt.Println(wid, "rps: ", yValues)
