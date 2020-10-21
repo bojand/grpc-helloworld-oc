@@ -154,10 +154,8 @@ func main() {
 	})
 
 	if len(rpsSamples) > 0 && hasHits {
-		// csv(rpsSamples, name)
-		// plot(rpsSamples, name, name)
-		plotW(wrpsSamples, name, name)
-		plotWC(wrpsSamples, name, name)
+		// plotW(wrpsSamples, name, name)
+		// plotWC(wrpsSamples, name, name)
 		aggrRPS(callSamples, name)
 	}
 }
@@ -192,11 +190,6 @@ func aggrRPS(s []*callSample, name string) {
 		s := s
 		nv := s.instant.UnixNano()
 
-		// sv := start.UnixNano()
-		// ev := end.UnixNano()
-		// fmt.Println("start: ", sv, " end:", ev, " nv:", nv, " nv >= sv:", nv >= sv, " nv < ev:", nv < sv, " crps:", crps)
-
-		// if s.instant.Before(end) {
 		if nv >= start.UnixNano() && nv < end.UnixNano() {
 			crps++
 
@@ -238,8 +231,9 @@ func aggrRPS(s []*callSample, name string) {
 	fmt.Println("aggr total:", total, " call count:", cc)
 
 	name = name + "_aggr"
+
 	csv(rpsSamples, name)
-	plot(rpsSamples, name, name)
+	plot(rpsSamples, name, "RPS")
 }
 
 func csv(data []valSample, colY string) {
@@ -267,13 +261,27 @@ func plot(data []valSample, name, yLabel string) {
 		yValues[i] = float64(v.value)
 	}
 
+	xStart := xValues[0]
+
 	graph := chart.Chart{
 		Width:  1200,
 		Height: 480,
 		XAxis: chart.XAxis{
-			Name:           "Time",
-			NameStyle:      chart.StyleShow(),
-			ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 3:04:05PM"),
+			Name:      "Time",
+			NameStyle: chart.StyleShow(),
+			// ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 3:04:05PM"),
+			ValueFormatter: func(v interface{}) string {
+				if typed, isTyped := v.(time.Time); isTyped {
+					return typed.Sub(xStart).Round(time.Second).String()
+				}
+				if typed, isTyped := v.(int64); isTyped {
+					return time.Unix(0, typed).Sub(xStart).Round(time.Second).String()
+				}
+				if typed, isTyped := v.(float64); isTyped {
+					return time.Unix(0, int64(typed)).Sub(xStart).Round(time.Second).String()
+				}
+				return ""
+			},
 			Style: chart.Style{
 				Show:        true,
 				StrokeWidth: 1,
@@ -283,6 +291,16 @@ func plot(data []valSample, name, yLabel string) {
 					B: 85,
 					A: 180,
 				},
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.5,
+			},
+			GridMinorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.0,
 			},
 		},
 		YAxis: chart.YAxis{
@@ -297,6 +315,16 @@ func plot(data []valSample, name, yLabel string) {
 					B: 85,
 					A: 180,
 				},
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.5,
+			},
+			GridMinorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.0,
 			},
 		},
 		Series: []chart.Series{
@@ -316,6 +344,19 @@ func plot(data []valSample, name, yLabel string) {
 	//note we have to do this as a separate step because we need a reference to graph
 	graph.Elements = []chart.Renderable{
 		chart.Legend(&graph),
+	}
+
+	svgFile, err := os.Create(fmt.Sprintf("%s_%d.svg", name, time.Now().Unix()))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := graph.Render(chart.SVG, svgFile); err != nil {
+		panic(err)
+	}
+
+	if err := svgFile.Close(); err != nil {
+		panic(err)
 	}
 
 	pngFile, err := os.Create(fmt.Sprintf("%s_%d.png", name, time.Now().Unix()))
