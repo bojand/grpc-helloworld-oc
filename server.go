@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -154,8 +155,9 @@ func main() {
 	})
 
 	if len(rpsSamples) > 0 && hasHits {
-		// plotW(wrpsSamples, name, name)
-		// plotWC(wrpsSamples, name, name)
+		plotW(wrpsSamples, name, "RPS per worker")
+		plotWC(wrpsSamples, name, name)
+		csvWRPS(wrpsSamples, name)
 		aggrRPS(callSamples, name)
 	}
 }
@@ -245,10 +247,98 @@ func csv(data []valSample, colY string) {
 	defer csvFile.Close()
 
 	fmt.Fprintf(csvFile, "%s,%s\n", "time", colY)
+
+	sort.Slice(data, func(i, j int) bool {
+		return data[i].instant.Before(data[j].instant)
+	})
+
+	xStart := data[0].instant
+
+	timeFormatter := customTimeFormatter(xStart)
+
 	for _, s := range data {
 		s := s
-		fmt.Fprintf(csvFile, "%s,%v\n", s.instant.Format(time.RFC3339), s.value)
+		fmt.Fprintf(csvFile, "%s,%v\n", timeFormatter(s.instant), s.value)
 	}
+	fmt.Fprintln(csvFile)
+}
+
+func csvWRPS(data map[time.Time]map[string]valSample, name string) {
+	csvFile, err := os.Create(fmt.Sprintf("%s_%d_worker_rps.csv", name, time.Now().Unix()))
+	if err != nil {
+		panic(err)
+	}
+
+	defer csvFile.Close()
+
+	xValues := make([]time.Time, 0, len(data))
+
+	for t := range data {
+		t := t
+		xValues = append(xValues, t)
+	}
+
+	sort.Slice(xValues, func(i, j int) bool {
+		return xValues[i].Before(xValues[j])
+	})
+
+	if len(xValues) <= 1 {
+		xValues = append(xValues, xValues[len(xValues)-1].Add(time.Second))
+	}
+
+	heading := "time"
+
+	for _, wid := range workerIDS {
+		heading = heading + "," + wid
+	}
+
+	fmt.Fprintf(csvFile, heading+",total\n")
+
+	var lines []string
+
+	xStart := xValues[0]
+
+	timeFormatter := customTimeFormatter(xStart)
+
+	for _, tsv := range xValues {
+
+		tsv := tsv
+
+		line := timeFormatter(tsv)
+
+		total := 0
+
+		tsdata, ok := data[tsv]
+
+		if !ok {
+			for range workerIDS {
+				line = line + "," + "0"
+				total = total + 0
+			}
+		} else {
+			for _, wid := range workerIDS {
+				wid := wid
+
+				if wdata, ok := tsdata[wid]; ok {
+					line = line + "," + strconv.FormatUint(wdata.value, 10)
+					total = total + int(wdata.value)
+				} else {
+					line = line + "," + "0"
+					total = total + 0
+				}
+			}
+		}
+
+		line = line + "," + strconv.FormatInt(int64(total), 10)
+
+		lines = append(lines, line)
+	}
+
+	for _, s := range lines {
+		s := s
+		fmt.Fprintf(csvFile, s+"\n")
+	}
+
 	fmt.Fprintln(csvFile)
 }
 
@@ -270,18 +360,7 @@ func plot(data []valSample, name, yLabel string) {
 			Name:      "Time",
 			NameStyle: chart.StyleShow(),
 			// ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 3:04:05PM"),
-			ValueFormatter: func(v interface{}) string {
-				if typed, isTyped := v.(time.Time); isTyped {
-					return typed.Sub(xStart).Round(time.Second).String()
-				}
-				if typed, isTyped := v.(int64); isTyped {
-					return time.Unix(0, typed).Sub(xStart).Round(time.Second).String()
-				}
-				if typed, isTyped := v.(float64); isTyped {
-					return time.Unix(0, int64(typed)).Sub(xStart).Round(time.Second).String()
-				}
-				return ""
-			},
+			ValueFormatter: customTimeFormatter(xStart),
 			Style: chart.Style{
 				Show:        true,
 				StrokeWidth: 1,
@@ -485,6 +564,142 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 	}
 }
 
+func plotWBar(data map[time.Time]map[string]valSample, name, yLabel string) {
+
+	xValues := make([]time.Time, 0, len(data))
+
+	for t := range data {
+		t := t
+		xValues = append(xValues, t)
+	}
+
+	sort.Slice(xValues, func(i, j int) bool {
+		return xValues[i].Before(xValues[j])
+	})
+
+	if len(xValues) <= 1 {
+		xValues = append(xValues, xValues[len(xValues)-1].Add(time.Second))
+	}
+
+	barW := 50
+	spaceW := 10
+
+	witdth := (len(xValues) + 1) * (barW + spaceW)
+
+	stackedBarChart := chart.StackedBarChart{
+		Title:      "RPS / worker",
+		TitleStyle: chart.StyleShow(),
+		Background: chart.Style{
+			Padding: chart.Box{
+				Top: 100,
+			},
+		},
+		Width:      witdth,
+		Height:     600,
+		XAxis:      chart.StyleShow(),
+		YAxis:      chart.StyleShow(),
+		BarSpacing: spaceW,
+	}
+
+	xStart := xValues[0]
+
+	pal, err := colorful.WarmPalette(len(workerIDS))
+	if err != nil {
+		panic(err)
+	}
+
+	colorWhite := drawing.Color{R: 241, G: 241, B: 241, A: 255}
+
+	nameFormatter := customTimeFormatter(xStart)
+	for _, tsv := range xValues {
+
+		tsv := tsv
+		stackedBar := chart.StackedBar{
+			Name:  nameFormatter(tsv),
+			Width: barW,
+		}
+
+		tsdata, ok := data[tsv]
+		if !ok {
+			for wi, wid := range workerIDS {
+				wid := wid
+
+				r, b, g, a := pal[wi].RGBA()
+				col := drawing.ColorFromAlphaMixedRGBA(r, g, b, a)
+
+				stackedBar.Values = append(stackedBar.Values, chart.Value{
+					Label: wid + ": 0",
+					Value: 0.0,
+					Style: chart.Style{
+						StrokeWidth: .01,
+						FillColor:   col,
+						FontColor:   colorWhite,
+					},
+				})
+			}
+		} else {
+			for wi, wid := range workerIDS {
+				wid := wid
+
+				r, b, g, a := pal[wi].RGBA()
+				col := drawing.ColorFromAlphaMixedRGBA(r, g, b, a)
+
+				if wdata, ok := tsdata[wid]; ok {
+					label := wid + ": " + strconv.FormatUint(wdata.value, 10)
+					fmt.Println(label)
+					stackedBar.Values = append(stackedBar.Values, chart.Value{
+						Label: label,
+						Value: float64(wdata.value),
+						Style: chart.Style{
+							StrokeWidth: .01,
+							FillColor:   col,
+							FontColor:   colorWhite,
+						},
+					})
+				} else {
+					stackedBar.Values = append(stackedBar.Values, chart.Value{
+						Label: wid + ": 0",
+						Value: 0.0,
+						Style: chart.Style{
+							StrokeWidth: .01,
+							FillColor:   col,
+							FontColor:   colorWhite,
+						},
+					})
+				}
+			}
+		}
+
+		stackedBarChart.Bars = append(stackedBarChart.Bars, stackedBar)
+	}
+
+	file, err := os.Create(fmt.Sprintf("%s_%d_workers_rps.svg", name, time.Now().Unix()))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := stackedBarChart.Render(chart.SVG, file); err != nil {
+		panic(err)
+	}
+
+	if err := file.Close(); err != nil {
+		panic(err)
+	}
+
+	pngFile, err := os.Create(fmt.Sprintf("%s_%d_workers_rps.png", name, time.Now().Unix()))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := stackedBarChart.Render(chart.PNG, pngFile); err != nil {
+		panic(err)
+	}
+
+	if err := pngFile.Close(); err != nil {
+		panic(err)
+	}
+}
+
 func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
 
 	converted := make([]time.Time, 0, len(data))
@@ -574,5 +789,20 @@ func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
 
 	if err := pngFile.Close(); err != nil {
 		panic(err)
+	}
+}
+
+func customTimeFormatter(start time.Time) chart.ValueFormatter {
+	return func(v interface{}) string {
+		if typed, isTyped := v.(time.Time); isTyped {
+			return typed.Sub(start).Round(time.Second).String()
+		}
+		if typed, isTyped := v.(int64); isTyped {
+			return time.Unix(0, typed).Sub(start).Round(time.Second).String()
+		}
+		if typed, isTyped := v.(float64); isTyped {
+			return time.Unix(0, int64(typed)).Sub(start).Round(time.Second).String()
+		}
+		return ""
 	}
 }
