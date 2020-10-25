@@ -486,6 +486,16 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 					A: 180,
 				},
 			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.5,
+			},
+			GridMinorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.0,
+			},
 		},
 		YAxis: chart.YAxis{
 			Name:      yLabel,
@@ -499,6 +509,16 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 					B: 85,
 					A: 180,
 				},
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.5,
+			},
+			GridMinorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.0,
 			},
 		},
 	}
@@ -560,6 +580,131 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 	}
 
 	if err := pngFile.Close(); err != nil {
+		panic(err)
+	}
+}
+
+func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
+
+	converted := make([]time.Time, 0, len(data))
+	for t := range data {
+		t := t
+		converted = append(converted, t)
+	}
+
+	sort.Slice(converted, func(i, j int) bool {
+		return converted[i].Before(converted[j])
+	})
+
+	xValues := make([]time.Time, len(converted)+2)
+	xValues[0] = converted[0].Add(-1 * time.Second)
+	for i, cv := range converted {
+		cv := cv
+		xValues[i+1] = cv
+	}
+
+	xValues[len(xValues)-1] = converted[len(converted)-1].Add(1 * time.Second)
+
+	graph := chart.Chart{
+		Width:  1200,
+		Height: 480,
+		XAxis: chart.XAxis{
+			Name:           "Time",
+			NameStyle:      chart.StyleShow(),
+			ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 3:04:05PM"),
+			Style: chart.Style{
+				Show:        true,
+				StrokeWidth: 1,
+				StrokeColor: drawing.Color{
+					R: 85,
+					G: 85,
+					B: 85,
+					A: 180,
+				},
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.5,
+			},
+			GridMinorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.0,
+			},
+		},
+		YAxis: chart.YAxis{
+			Name:      yLabel,
+			NameStyle: chart.StyleShow(),
+			Style: chart.Style{
+				Show:        true,
+				StrokeWidth: 1,
+				StrokeColor: drawing.Color{
+					R: 85,
+					G: 85,
+					B: 85,
+					A: 180,
+				},
+			},
+			GridMajorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.5,
+			},
+			GridMinorStyle: chart.Style{
+				Show:        true,
+				StrokeColor: drawing.ColorBlack.WithAlpha(24),
+				StrokeWidth: 1.0,
+			},
+		},
+	}
+
+	yValues := make([]float64, 0, len(xValues))
+	for _, tsv := range xValues {
+		tsv := tsv
+		tsdata, ok := data[tsv]
+		if !ok {
+			yValues = append(yValues, 0.0)
+		} else {
+			yValues = append(yValues, float64(len(tsdata)))
+		}
+	}
+
+	fmt.Println("wc:", yValues)
+
+	cs := chart.TimeSeries{
+		Name: "worker_count",
+		Style: chart.Style{
+			Show: true,
+		},
+		XValues: xValues,
+		YValues: yValues,
+	}
+	graph.Series = append(graph.Series, cs)
+
+	pngFile, err := os.Create(fmt.Sprintf("%s_%d_wc.png", name, time.Now().Unix()))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := graph.Render(chart.PNG, pngFile); err != nil {
+		panic(err)
+	}
+
+	if err := pngFile.Close(); err != nil {
+		panic(err)
+	}
+
+	svgFile, err := os.Create(fmt.Sprintf("%s_%d_wc.svg", name, time.Now().Unix()))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := graph.Render(chart.SVG, svgFile); err != nil {
+		panic(err)
+	}
+
+	if err := svgFile.Close(); err != nil {
 		panic(err)
 	}
 }
@@ -692,98 +837,6 @@ func plotWBar(data map[time.Time]map[string]valSample, name, yLabel string) {
 	}
 
 	if err := stackedBarChart.Render(chart.PNG, pngFile); err != nil {
-		panic(err)
-	}
-
-	if err := pngFile.Close(); err != nil {
-		panic(err)
-	}
-}
-
-func plotWC(data map[time.Time]map[string]valSample, name, yLabel string) {
-
-	converted := make([]time.Time, 0, len(data))
-	for t := range data {
-		t := t
-		converted = append(converted, t)
-	}
-
-	sort.Slice(converted, func(i, j int) bool {
-		return converted[i].Before(converted[j])
-	})
-
-	xValues := make([]time.Time, len(converted)+2)
-	xValues[0] = converted[0].Add(-1 * time.Second)
-	for i, cv := range converted {
-		cv := cv
-		xValues[i+1] = cv
-	}
-
-	xValues[len(xValues)-1] = converted[len(converted)-1].Add(1 * time.Second)
-
-	graph := chart.Chart{
-		Width:  1200,
-		Height: 480,
-		XAxis: chart.XAxis{
-			Name:           "Time",
-			NameStyle:      chart.StyleShow(),
-			ValueFormatter: chart.TimeValueFormatterWithFormat("01-02 3:04:05PM"),
-			Style: chart.Style{
-				Show:        true,
-				StrokeWidth: 1,
-				StrokeColor: drawing.Color{
-					R: 85,
-					G: 85,
-					B: 85,
-					A: 180,
-				},
-			},
-		},
-		YAxis: chart.YAxis{
-			Name:      yLabel,
-			NameStyle: chart.StyleShow(),
-			Style: chart.Style{
-				Show:        true,
-				StrokeWidth: 1,
-				StrokeColor: drawing.Color{
-					R: 85,
-					G: 85,
-					B: 85,
-					A: 180,
-				},
-			},
-		},
-	}
-
-	yValues := make([]float64, 0, len(xValues))
-	for _, tsv := range xValues {
-		tsv := tsv
-		tsdata, ok := data[tsv]
-		if !ok {
-			yValues = append(yValues, 0.0)
-		} else {
-			yValues = append(yValues, float64(len(tsdata)))
-		}
-	}
-
-	fmt.Println("wc:", yValues)
-
-	cs := chart.TimeSeries{
-		Name: "worker_count",
-		Style: chart.Style{
-			Show: true,
-		},
-		XValues: xValues,
-		YValues: yValues,
-	}
-	graph.Series = append(graph.Series, cs)
-
-	pngFile, err := os.Create(fmt.Sprintf("%s_%d_wc.png", name, time.Now().Unix()))
-	if err != nil {
-		panic(err)
-	}
-
-	if err := graph.Render(chart.PNG, pngFile); err != nil {
 		panic(err)
 	}
 
