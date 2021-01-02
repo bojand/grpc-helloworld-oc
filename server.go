@@ -72,10 +72,18 @@ func sayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) 
 
 	time.Sleep(50 * time.Millisecond)
 
+	// chance := rand.Intn(10) + 1
+	// if chance < 2 {
+	// 	err := status.Error(codes.NotFound, "id was not found")
+	// 	return nil, err
+	// }
+
 	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
 }
 
 func main() {
+	log.SetFlags(log.Lmicroseconds)
+
 	wrps = make(map[string]uint64, 100)
 	workerIDSMap = make(map[string]struct{}, 100)
 
@@ -552,8 +560,20 @@ func plotW(data map[time.Time]map[string]valSample, name, yLabel string) {
 			}
 		}
 
-		if len(yValues) <= 1 {
+		delta := false
+		for i := range yValues {
+			if i == 0 {
+				continue
+			}
+
+			if yValues[i] != yValues[i-1] {
+				delta = true
+			}
+		}
+
+		if !delta {
 			yValues = append(yValues, 0.0)
+			xValues = append(xValues, xValues[0].Add(time.Millisecond))
 		}
 
 		fmt.Println(wid, "rps: ", yValues)
